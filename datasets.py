@@ -1,5 +1,5 @@
 """
-Dataset loaders for Pascal VOC 2012 and ISIC 2018
+Dataset loaders for Oxford-IIIT Pet and ISIC 2018
 """
 import os
 import torch
@@ -7,54 +7,8 @@ from torch.utils.data import Dataset
 from PIL import Image
 import numpy as np
 import torchvision.transforms as transforms
-from torchvision.datasets import VOCSegmentation
+from torchvision.datasets import OxfordIIITPet
 import cv2
-
-
-class VOCDataset(Dataset):
-    """Pascal VOC 2012 dataset loader"""
-    
-    def __init__(self, root='./data/VOC2012', split='val', transform=None, target_transform=None):
-        """
-        Args:
-            root: Root directory of VOC dataset
-            split: 'train' or 'val'
-            transform: Transform to apply to images
-            target_transform: Transform to apply to masks
-        """
-        self.dataset = VOCSegmentation(
-            root=root,
-            year='2012',
-            image_set=split,
-            download=True,
-            transform=None,
-            target_transform=None
-        )
-        self.transform = transform
-        self.target_transform = target_transform
-        
-    def __len__(self):
-        return len(self.dataset)
-    
-    def __getitem__(self, idx):
-        image, mask = self.dataset[idx]
-        
-        # Convert mask to numpy array for processing
-        mask = np.array(mask)
-        # VOC masks have class indices 0-20, but some pixels are 255 (boundary/void)
-        # We'll treat 255 as background (0)
-        mask[mask == 255] = 0
-        
-        if self.transform:
-            image = self.transform(image)
-        
-        if self.target_transform:
-            mask = self.target_transform(mask)
-        else:
-            # Convert to tensor if no transform provided
-            mask = torch.from_numpy(mask).long()
-        
-        return image, mask
 
 
 class ISICDataset(Dataset):
@@ -74,7 +28,6 @@ class ISICDataset(Dataset):
         self.transform = transform
         self.target_transform = target_transform
         
-        # ISIC 2018 structure: images in one folder, masks in another
         image_dir = os.path.join(root, 'ISIC2018_Task1-2_Training_Input')
         mask_dir = os.path.join(root, 'ISIC2018_Task1_Training_GroundTruth')
         
@@ -83,7 +36,6 @@ class ISICDataset(Dataset):
         if not os.path.exists(mask_dir):
             raise ValueError(f"ISIC mask directory not found: {mask_dir}")
         
-        # Get all image files
         self.image_files = sorted([f for f in os.listdir(image_dir) if f.endswith('.jpg')])
         
         if max_samples:
@@ -98,36 +50,99 @@ class ISICDataset(Dataset):
     def __getitem__(self, idx):
         img_name = self.image_files[idx]
         
-        # Load image
         img_path = os.path.join(self.image_dir, img_name)
         image = Image.open(img_path).convert('RGB')
         
-        # Load mask (same name but with _segmentation suffix)
         mask_name = img_name.replace('.jpg', '_segmentation.png')
         mask_path = os.path.join(self.mask_dir, mask_name)
         
         if os.path.exists(mask_path):
             mask = Image.open(mask_path).convert('L')
-            mask = np.array(mask)
-            # Binary mask: 0 for background, 1 for lesion
-            mask = (mask > 128).astype(np.uint8)
+            mask_array = np.array(mask)
+            mask_array = (mask_array > 128).astype(np.uint8)
+            mask = Image.fromarray(mask_array, mode='L')
         else:
-            # If mask doesn't exist, create empty mask
-            mask = np.zeros((image.size[1], image.size[0]), dtype=np.uint8)
+            mask = Image.new('L', image.size, 0)
         
         if self.transform:
             image = self.transform(image)
         
         if self.target_transform:
             mask = self.target_transform(mask)
+            if isinstance(mask, Image.Image):
+                mask = np.array(mask)
+            mask = torch.from_numpy(mask).long() if isinstance(mask, np.ndarray) else mask
         else:
-            mask = torch.from_numpy(mask).long()
+            mask = torch.from_numpy(np.array(mask)).long()
         
         return image, mask, img_name
 
 
-def get_voc_transform(size=(512, 512)):
-    """Get transform for VOC dataset"""
+class PetDataset(Dataset):
+    """Oxford-IIIT Pet dataset loader for segmentation"""
+
+    def __init__(self, root='./data/OxfordPets', split='test', transform=None,
+                 target_transform=None, max_samples=None):
+        """
+        Args:
+            root: Root directory for dataset
+            split: 'trainval' or 'test'
+            transform: Transform for images
+            target_transform: Transform for masks
+            max_samples: Optional max number of samples
+        """
+        self.transform = transform
+        self.target_transform = target_transform
+        try:
+            self.dataset = OxfordIIITPet(
+                root=root,
+                split=split,
+                target_types='segmentation',
+                download=True
+            )
+        except Exception as e:
+            print(f"Warning: Failed to load Oxford-IIIT Pet dataset: {e}")
+            print("If the download keeps failing, manually download from:")
+            print("https://www.robots.ox.ac.uk/~vgg/data/pets/")
+            print("and extract into ./data/OxfordPets")
+            raise
+
+        self.indices = list(range(len(self.dataset)))
+        if max_samples:
+            self.indices = self.indices[:max_samples]
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, idx):
+        real_idx = self.indices[idx]
+        image, mask = self.dataset[real_idx]
+        img_path = None
+        if hasattr(self.dataset, '_images'):
+            img_path = self.dataset._images[real_idx]
+        elif hasattr(self.dataset, 'images'):
+            img_path = self.dataset.images[real_idx]
+        img_name = os.path.basename(img_path) if img_path else f"pet_{real_idx}"
+
+        mask = np.array(mask) - 1
+        mask = np.clip(mask, 0, 2)
+        mask = Image.fromarray(mask.astype(np.uint8))
+
+        if self.transform:
+            image = self.transform(image)
+
+        if self.target_transform:
+            mask = self.target_transform(mask)
+            if isinstance(mask, Image.Image):
+                mask = np.array(mask)
+            mask = torch.from_numpy(mask).long() if isinstance(mask, np.ndarray) else mask
+        else:
+            mask = torch.from_numpy(np.array(mask)).long()
+
+        return image, mask, img_name
+
+
+def get_isic_transform(size=(512, 512)):
     return transforms.Compose([
         transforms.Resize(size),
         transforms.ToTensor(),
@@ -135,8 +150,7 @@ def get_voc_transform(size=(512, 512)):
     ])
 
 
-def get_isic_transform(size=(512, 512)):
-    """Get transform for ISIC dataset"""
+def get_pet_transform(size=(512, 512)):
     return transforms.Compose([
         transforms.Resize(size),
         transforms.ToTensor(),
@@ -145,7 +159,6 @@ def get_isic_transform(size=(512, 512)):
 
 
 def get_mask_transform(size=(512, 512)):
-    """Get transform for masks (resize only, no normalization)"""
     return transforms.Compose([
         transforms.Resize(size, interpolation=transforms.InterpolationMode.NEAREST)
     ])

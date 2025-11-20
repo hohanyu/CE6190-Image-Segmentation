@@ -1,6 +1,6 @@
 # Segmentation Review Assignment
 
-This repository contains code for evaluating pretrained segmentation models (DeepLabv3+ and FCN-ResNet50) on Pascal VOC 2012 and ISIC 2018 datasets.
+This repository contains code for evaluating pretrained segmentation models (DeepLabv3+ and FCN-ResNet50) on multiple datasets (Oxford-IIIT Pet, ISIC 2018, Pascal VOC 2012).
 
 ## Project Structure
 
@@ -33,10 +33,11 @@ pip install -r requirements.txt
 **Note**: If you don't have `pip` available, use `pip3` instead. On macOS with Homebrew, you may need to use a virtual environment to avoid system package conflicts.
 
 3. Download datasets:
-   - **Pascal VOC 2012**: The dataset will be automatically downloaded when you run the code (using torchvision's built-in downloader)
+   - **Oxford-IIIT Pet**: Automatically downloaded via torchvision when first used (default in this repo)
    - **ISIC 2018**: Download from [ISIC Archive](https://challenge2018.isic-archive.com/) and extract to `./data/ISIC2018/`
      - Training images: `ISIC2018_Task1-2_Training_Input/`
      - Training masks: `ISIC2018_Task1_Training_GroundTruth/`
+   - **Pascal VOC 2012 (optional)**: Auto-downloads via torchvision. If the official mirror is slow, download `VOCtrainval_11-May-2012.tar` manually and extract into `./data/VOC2012/`.
 
 ## Usage
 
@@ -47,7 +48,7 @@ pip install -r requirements.txt
 source venv/bin/activate  # On macOS/Linux
 ```
 
-Then run all experiments (evaluation, hyperparameter analysis, good/bad case finding):
+Then run all experiments (evaluation, hyperparameter analysis, good/bad case finding). By default, both Oxford-IIIT Pet (in-domain) and ISIC 2018 (out-of-domain) are evaluated:
 
 ```bash
 python main.py --save_dir ./results --device cuda
@@ -57,22 +58,24 @@ If you don't have CUDA available, use `--device cpu` instead.
 
 ### Command Line Arguments
 
+- `--datasets`: List of datasets to evaluate (any subset of `pet`, `isic`, `voc`)
 - `--save_dir`: Directory to save results (default: `./results`)
 - `--device`: Device to use - `cuda` or `cpu` (default: `cuda`)
 - `--resolutions`: Resolutions for hyperparameter analysis (default: `256 384 512`)
-- `--voc_root`: Root directory for VOC dataset (default: `./data/VOC2012`)
-- `--isic_root`: Root directory for ISIC dataset (default: `./data/ISIC2018`)
-- `--isic_max_samples`: Maximum number of ISIC samples (default: `500`)
+- `--pet_root`, `--pet_split`, `--pet_max_samples`: Settings for Oxford-IIIT Pet
+- `--isic_root`, `--isic_split`, `--isic_max_samples`: Settings for ISIC 2018
+- `--voc_root`, `--voc_split`, `--voc_max_samples`: Settings for Pascal VOC
 
 ### Example
 
 ```bash
-# Run with custom settings
+# Evaluate Pet + ISIC on CPU with custom sample counts
 python main.py \
+    --datasets pet isic \
+    --device cpu \
     --save_dir ./my_results \
-    --device cuda \
-    --resolutions 256 384 512 640 \
-    --isic_max_samples 1000
+    --pet_max_samples 2000 \
+    --isic_max_samples 800
 ```
 
 ## Output Structure
@@ -82,23 +85,17 @@ After running experiments, results will be saved in the following structure:
 ```
 results/
 ├── deeplabv3_resnet101/
-│   ├── voc/
-│   │   ├── voc_metrics.json
+│   ├── pet/
+│   │   ├── pet_metrics.json
 │   │   ├── visualizations/
 │   │   └── cases/
-│   │       ├── good_case_*.png
-│   │       └── bad_case_*.png
-│   └── isic/
-│       ├── isic_metrics.json
-│       ├── visualizations/
-│       └── cases/
-├── fcn_resnet50/
-│   └── (same structure)
+│   ├── isic/
+│   │   ├── isic_metrics.json
+│   │   └── ...
+│   └── voc/ (if enabled)
+├── fcn_resnet50/ (same structure)
 ├── hyperparameter_analysis/
-│   ├── deeplabv3_resnet101_voc_hyperparameter_analysis.csv
-│   ├── deeplabv3_resnet101_isic_hyperparameter_analysis.csv
-│   ├── fcn_resnet50_voc_hyperparameter_analysis.csv
-│   └── fcn_resnet50_isic_hyperparameter_analysis.csv
+│   └── <model>_<dataset>_hyperparameter_analysis.csv
 └── summary_results.csv
 ```
 
@@ -106,10 +103,10 @@ results/
 
 The code computes the following metrics:
 
-- **mIoU (Mean Intersection over Union)**: For multi-class segmentation (VOC)
+- **mIoU (Mean Intersection over Union)**: For multi-class datasets (Pet, VOC)
 - **Pixel Accuracy**: Overall pixel classification accuracy
 - **Dice Coefficient**: For binary segmentation (ISIC)
-- **Per-class IoU**: Individual class performance (VOC)
+- **Per-class IoU**: Individual class performance (multi-class datasets)
 
 ## Models
 
@@ -120,8 +117,9 @@ Both models are pretrained on COCO with VOC-style labels and used without fine-t
 
 ## Datasets
 
-- **Pascal VOC 2012**: 21 classes (20 object classes + background), validation set (1,449 images)
-- **ISIC 2018**: Binary segmentation (lesion vs background), subset of 500 test images
+- **Oxford-IIIT Pet** (default in-domain benchmark): 37 breeds, segmentation masks with background/pet/border classes. Auto-download.
+- **ISIC 2018** (default out-of-domain benchmark): Binary lesion segmentation. Requires manual download.
+- **Pascal VOC 2012** (optional in-domain benchmark): 21 semantic classes. Auto-download (large ~2GB tarball).
 
 ## Notes
 

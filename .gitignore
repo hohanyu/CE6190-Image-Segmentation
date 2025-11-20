@@ -41,9 +41,14 @@ data/
 
 # Results
 results/
+results_*_test/
+results_test/
 *.png
 *.jpg
 *.jpeg
+
+# Logs
+*.log
 
 # Jupyter
 .ipynb_checkpoints/
