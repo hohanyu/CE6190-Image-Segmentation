@@ -1,6 +1,3 @@
-"""
-Dataset loaders for Oxford-IIIT Pet and ISIC 2018
-"""
 import os
 import torch
 from torch.utils.data import Dataset
@@ -12,17 +9,9 @@ import cv2
 
 
 class ISICDataset(Dataset):
-    """ISIC 2018 dataset loader for binary segmentation"""
     
     def __init__(self, root='./data/ISIC2018', split='test', transform=None, target_transform=None, max_samples=None):
-        """
-        Args:
-            root: Root directory containing ISIC images and masks
-            split: 'train' or 'test'
-            transform: Transform to apply to images
-            target_transform: Transform to apply to masks
-            max_samples: Maximum number of samples to load (None for all)
-        """
+
         self.root = root
         self.split = split
         self.transform = transform
@@ -79,18 +68,10 @@ class ISICDataset(Dataset):
 
 
 class PetDataset(Dataset):
-    """Oxford-IIIT Pet dataset loader for segmentation"""
 
     def __init__(self, root='./data/OxfordPets', split='test', transform=None,
                  target_transform=None, max_samples=None):
-        """
-        Args:
-            root: Root directory for dataset
-            split: 'trainval' or 'test'
-            transform: Transform for images
-            target_transform: Transform for masks
-            max_samples: Optional max number of samples
-        """
+
         self.transform = transform
         self.target_transform = target_transform
         try:
@@ -102,9 +83,6 @@ class PetDataset(Dataset):
             )
         except Exception as e:
             print(f"Warning: Failed to load Oxford-IIIT Pet dataset: {e}")
-            print("If the download keeps failing, manually download from:")
-            print("https://www.robots.ox.ac.uk/~vgg/data/pets/")
-            print("and extract into ./data/OxfordPets")
             raise
 
         self.indices = list(range(len(self.dataset)))

@@ -1,6 +1,3 @@
-"""
-Main experiment script for segmentation evaluation
-"""
 import os
 import torch
 import numpy as np
@@ -67,7 +64,7 @@ def build_dataset_instance(dataset_name, root, split, size=(512, 512), max_sampl
 def evaluate_model_on_dataset(model, dataset, dataset_name, num_classes, is_binary,
                              device='cuda', batch_size=1, save_results_dir=None,
                              visualize_samples=5):
-    """Evaluate model on dataset and compute metrics"""
+    #evaluate model on dataset and compute metrics
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=2)
     
     all_metrics = []
@@ -215,7 +212,7 @@ def hyperparameter_analysis(model_name, dataset_name, dataset_config, resolution
 
 def find_good_bad_cases(model, dataset, dataset_name, num_classes, is_binary,
                         device='cuda', num_cases=5):
-    """Find good and bad segmentation cases for qualitative analysis"""
+    # find good and bad segmentation cases for qualitative analysis
     dataloader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=2)
     
     case_scores = []
@@ -428,7 +425,6 @@ def run_all_experiments(save_dir='./results', device='cuda', resolutions=[256, 3
     
     print("\n" + "=" * 60)
     print("All experiments completed")
-    print(f"Results saved to: {save_dir}")
     print("=" * 60)
 
 
