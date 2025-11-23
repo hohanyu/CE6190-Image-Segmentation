@@ -1,13 +1,10 @@
-"""
-Evaluation metrics for segmentation
-"""
 import torch
 import numpy as np
 from sklearn.metrics import confusion_matrix
 
 
 def compute_iou(pred, target, num_classes=21, ignore_index=255):
-    """Compute IoU for each class and mean IoU"""
+    #IoU for each class and mean IoU
     if isinstance(pred, torch.Tensor):
         pred = pred.cpu().numpy()
     if isinstance(target, torch.Tensor):
@@ -20,12 +17,15 @@ def compute_iou(pred, target, num_classes=21, ignore_index=255):
         pred = pred.flatten()
         target = target.flatten()
     
+    #filter out ignore index
     valid_mask = (target != ignore_index)
     pred = pred[valid_mask]
     target = target[valid_mask]
     
+    # compute confusion matrix
     cm = confusion_matrix(target, pred, labels=np.arange(num_classes))
     
+    #IoU per class
     iou_per_class = np.zeros(num_classes)
     for i in range(num_classes):
         intersection = cm[i, i]
@@ -33,7 +33,8 @@ def compute_iou(pred, target, num_classes=21, ignore_index=255):
         if union > 0:
             iou_per_class[i] = intersection / union
         else:
-            iou_per_class[i] = np.nan
+
+            iou_per_class[i] = np.nan  
     
     mean_iou = np.nanmean(iou_per_class)
     
@@ -41,12 +42,13 @@ def compute_iou(pred, target, num_classes=21, ignore_index=255):
 
 
 def compute_pixel_accuracy(pred, target, ignore_index=255):
-    """Compute pixel accuracy"""
+    #handle tensors
     if isinstance(pred, torch.Tensor):
         pred = pred.cpu().numpy()
     if isinstance(target, torch.Tensor):
         target = target.cpu().numpy()
     
+    #flatten
     if pred.ndim == 3:
         pred = pred.reshape(-1)
         target = target.reshape(-1)
@@ -61,16 +63,20 @@ def compute_pixel_accuracy(pred, target, ignore_index=255):
     correct = (pred == target).sum()
     total = len(target)
     
-    return correct / total if total > 0 else 0.0
+    if total > 0:
+        return correct / total
+    else:
+        return 0.0
 
 
 def compute_dice_coefficient(pred, target, class_idx=1):
-    """Compute Dice coefficient for binary segmentation"""
+    #convert tensors
     if isinstance(pred, torch.Tensor):
         pred = pred.cpu().numpy()
     if isinstance(target, torch.Tensor):
         target = target.cpu().numpy()
     
+    #flatten to 1d
     if pred.ndim == 3:
         pred = pred.reshape(-1)
         target = target.reshape(-1)
@@ -78,12 +84,14 @@ def compute_dice_coefficient(pred, target, class_idx=1):
         pred = pred.flatten()
         target = target.flatten()
     
+    # binarize
     pred_binary = (pred == class_idx).astype(np.float32)
     target_binary = (target == class_idx).astype(np.float32)
     
     intersection = (pred_binary * target_binary).sum()
     union = pred_binary.sum() + target_binary.sum()
     
+    #edge case no foreground in either
     if union == 0:
         return 1.0
     
@@ -92,11 +100,11 @@ def compute_dice_coefficient(pred, target, class_idx=1):
 
 
 def evaluate_segmentation(pred, target, num_classes=21, is_binary=False, ignore_index=255):
-    """Compute all segmentation metrics (IoU, pixel acc, Dice if binary)"""
+    #compute all metrics
     metrics = {}
-    
+    #compute pixel accuracy
     metrics['pixel_acc'] = compute_pixel_accuracy(pred, target, ignore_index)
-    
+    #compute other metrics based on dataset type
     if is_binary:
         metrics['dice'] = compute_dice_coefficient(pred, target, class_idx=1)
         iou_per_class, mean_iou = compute_iou(pred, target, num_classes=2, ignore_index=ignore_index)

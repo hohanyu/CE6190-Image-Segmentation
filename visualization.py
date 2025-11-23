@@ -1,6 +1,4 @@
-"""
-Visualization utilities for segmentation results
-"""
+
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
@@ -9,7 +7,7 @@ import torch
 
 def visualize_segmentation(image, pred_mask, gt_mask=None, num_classes=21, 
                           class_names=None, save_path=None, show=True):
-    """Visualize segmentation results with original, prediction, and ground truth"""
+
     if isinstance(image, torch.Tensor):
         if image.dim() == 4:
             image = image[0]
@@ -45,6 +43,7 @@ def visualize_segmentation(image, pred_mask, gt_mask=None, num_classes=21,
     axes[0].set_title('Original Image')
     axes[0].axis('off')
     
+    #show prediction
     if num_classes == 2:
         axes[1].imshow(pred_mask, cmap='gray')
         axes[1].set_title('Predicted Mask')
@@ -74,7 +73,6 @@ def visualize_segmentation(image, pred_mask, gt_mask=None, num_classes=21,
 
 
 def visualize_overlay(image, pred_mask, gt_mask=None, alpha=0.5, save_path=None, show=True):
-    """Visualize segmentation with overlay on original image"""
     if isinstance(image, torch.Tensor):
         if image.dim() == 4:
             image = image[0]
@@ -97,7 +95,10 @@ def visualize_overlay(image, pred_mask, gt_mask=None, alpha=0.5, save_path=None,
     if gt_mask is not None and isinstance(gt_mask, torch.Tensor):
         gt_mask = gt_mask.cpu().numpy()
     
-    num_cols = 2 if gt_mask is None else 3
+    if gt_mask is None:
+        num_cols = 2
+    else:
+        num_cols = 3
     fig, axes = plt.subplots(1, num_cols, figsize=(5*num_cols, 5))
     if num_cols == 1:
         axes = [axes]
@@ -140,15 +141,19 @@ def visualize_overlay(image, pred_mask, gt_mask=None, alpha=0.5, save_path=None,
 
 
 def save_comparison_grid(images, preds, gts, save_path, num_classes=21, max_samples=10):
-    """Save a grid of comparison images"""
-    n_samples = min(len(images), max_samples)
+    # limit number of samples
+    n_samples = len(images)
+    if n_samples > max_samples:
+        n_samples = max_samples
     fig, axes = plt.subplots(n_samples, 3, figsize=(12, 4*n_samples))
     
+    # fix axes shape for single sample
     if n_samples == 1:
         axes = axes.reshape(1, -1)
     
     for i in range(n_samples):
         img = images[i]
+        # process image
         if isinstance(img, torch.Tensor):
             if img.dim() == 3 and img.shape[0] == 3:
                 mean = np.array([0.485, 0.456, 0.406])

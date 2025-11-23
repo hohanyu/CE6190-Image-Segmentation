@@ -6,18 +6,14 @@ import pandas as pd
 from torch.utils.data import DataLoader
 import json
 
-from datasets import (
-    ISICDataset,
-    PetDataset,
-    get_isic_transform,
-    get_pet_transform,
-    get_mask_transform,
-)
+from datasets import ISICDataset, PetDataset
+from datasets import get_isic_transform, get_pet_transform, get_mask_transform
 from models import load_model
 from metrics import evaluate_segmentation, compute_iou, compute_pixel_accuracy, compute_dice_coefficient
 from visualization import visualize_segmentation, save_comparison_grid
 
 
+# dataset configs
 DATASET_DEFAULTS = {
     'pet': {
         'default_root': './data/OxfordPets',
@@ -29,7 +25,7 @@ DATASET_DEFAULTS = {
     'isic': {
         'default_root': './data/ISIC2018',
         'default_split': 'test',
-        'default_max_samples': 500,
+        'default_max_samples': 500, 
         'num_classes': 2,
         'is_binary': True,
     },
@@ -37,6 +33,7 @@ DATASET_DEFAULTS = {
 
 
 def build_dataset_instance(dataset_name, root, split, size=(512, 512), max_samples=None):
+    # get transforms
     mask_transform = get_mask_transform(size=size)
     if dataset_name == 'isic':
         transform = get_isic_transform(size=size)
@@ -57,28 +54,38 @@ def build_dataset_instance(dataset_name, root, split, size=(512, 512), max_sampl
             max_samples=max_samples
         )
     else:
-        raise ValueError(f"Unknown dataset: {dataset_name}")
+        raise ValueError("Unknown dataset: " + dataset_name)
     return dataset
 
 
 def evaluate_model_on_dataset(model, dataset, dataset_name, num_classes, is_binary,
                              device='cuda', batch_size=1, save_results_dir=None,
                              visualize_samples=5):
-    #evaluate model on dataset and compute metrics
+    #main eval
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=2)
     
     all_metrics = []
     sample_results = []
     
     model.model.eval()
+    # print(f"evaluating on {len(dataset)} samples")
     
     with torch.no_grad():
         for idx, batch in enumerate(tqdm(dataloader, desc=f"Evaluating {dataset_name}")):
-            if isinstance(batch, (list, tuple)) and len(batch) == 3:
-                images, masks, img_names = batch
+            # unpack batch
+            if isinstance(batch, list) or isinstance(batch, tuple):
+                if len(batch) == 3:
+                    images, masks, img_names = batch
+                else:
+                    images, masks = batch
+                    img_names = []
+                    for i in range(len(images)):
+                        img_names.append(f"sample_{idx}_{i}")
             else:
                 images, masks = batch
-                img_names = [f"sample_{idx}_{i}" for i in range(len(images))]
+                img_names = []
+                for i in range(len(images)):
+                    img_names.append(f"sample_{idx}_{i}")
             
             images = images.to(device)
             masks = masks.to(device)
@@ -97,13 +104,21 @@ def evaluate_model_on_dataset(model, dataset, dataset_name, num_classes, is_bina
                 pred = preds[i].cpu().numpy()
                 mask = masks[i].cpu().numpy()
                 
-                if isinstance(img_names, (list, tuple)):
-                    img_name = img_names[i] if i < len(img_names) else f"sample_{idx}_{i}"
+                # get image name
+                if isinstance(img_names, list) or isinstance(img_names, tuple):
+                    if i < len(img_names):
+                        img_name = img_names[i]
+                    else:
+                        img_name = f"sample_{idx}_{i}"
                 else:
                     img_name = img_names
                 
+                # handle tuple names from dataloader
                 if isinstance(img_name, tuple):
-                    img_name = img_name[0] if len(img_name) > 0 else f"sample_{idx}_{i}"
+                    if len(img_name) > 0:
+                        img_name = img_name[0]
+                    else:
+                        img_name = f"sample_{idx}_{i}"
                 
                 metrics = evaluate_segmentation(
                     pred, mask, 
@@ -121,32 +136,63 @@ def evaluate_model_on_dataset(model, dataset, dataset_name, num_classes, is_bina
                         'metrics': metrics
                     })
     
+    #aggregate metrics
     if is_binary:
+        dice_vals = []
+        iou_vals = []
+        acc_vals = []
+        for m in all_metrics:
+            dice_vals.append(m['dice'])
+            iou_vals.append(m['iou'])
+            acc_vals.append(m['pixel_acc'])
         avg_metrics = {
-            'dice': float(np.mean([m['dice'] for m in all_metrics])),
-            'iou': float(np.mean([m['iou'] for m in all_metrics])),
-            'pixel_acc': float(np.mean([m['pixel_acc'] for m in all_metrics]))
+            'dice': float(np.mean(dice_vals)),
+            'iou': float(np.mean(iou_vals)),
+            'pixel_acc': float(np.mean(acc_vals))
         }
     else:
+        miou_vals = [m['mIoU'] for m in all_metrics]
+        acc_vals = [m['pixel_acc'] for m in all_metrics]
         avg_metrics = {
-            'mIoU': float(np.mean([m['mIoU'] for m in all_metrics])),
-            'pixel_acc': float(np.mean([m['pixel_acc'] for m in all_metrics]))
+            'mIoU': float(np.mean(miou_vals)),
+            'pixel_acc': float(np.mean(acc_vals))
         }
-        all_iou_per_class = [m['iou_per_class'] for m in all_metrics]
+        # Per-class IoU for multi-class datasets
+        all_iou_per_class = []
+        for m in all_metrics:
+            all_iou_per_class.append(m['iou_per_class'])
         avg_iou_per_class = np.nanmean(all_iou_per_class, axis=0)
-        avg_metrics['iou_per_class'] = [float(x) if not np.isnan(x) else None for x in avg_iou_per_class.tolist()]
+        iou_list = []
+        for x in avg_iou_per_class.tolist():
+            if not np.isnan(x):
+                iou_list.append(float(x))
+            else:
+                iou_list.append(None)
+        avg_metrics['iou_per_class'] = iou_list
     
     if save_results_dir:
         os.makedirs(save_results_dir, exist_ok=True)
         
         metrics_to_save = {}
         for key, value in avg_metrics.items():
-            if isinstance(value, (np.integer, np.floating)):
+            if isinstance(value, np.integer) or isinstance(value, np.floating):
                 metrics_to_save[key] = float(value)
             elif isinstance(value, np.ndarray):
-                metrics_to_save[key] = [float(x) if not np.isnan(x) else None for x in value.tolist()]
+                temp_list = []
+                for x in value.tolist():
+                    if not np.isnan(x):
+                        temp_list.append(float(x))
+                    else:
+                        temp_list.append(None)
+                metrics_to_save[key] = temp_list
             elif isinstance(value, list):
-                metrics_to_save[key] = [float(x) if isinstance(x, (np.integer, np.floating)) else x for x in value]
+                temp_list = []
+                for x in value:
+                    if isinstance(x, np.integer) or isinstance(x, np.floating):
+                        temp_list.append(float(x))
+                    else:
+                        temp_list.append(x)
+                metrics_to_save[key] = temp_list
             else:
                 metrics_to_save[key] = value
         
@@ -172,10 +218,11 @@ def evaluate_model_on_dataset(model, dataset, dataset_name, num_classes, is_bina
 
 def hyperparameter_analysis(model_name, dataset_name, dataset_config, resolutions=[256, 384, 512],
                            device='cuda', save_dir=None):
+    #different resolutions
     results = []
     
     for res in resolutions:
-        print(f"\nEvaluating {model_name} at resolution {res}x{res}")
+        print(f"\nevaluating {model_name} at resolution {res}x{res}")
         
         test_dataset = build_dataset_instance(
             dataset_name,
@@ -185,6 +232,7 @@ def hyperparameter_analysis(model_name, dataset_name, dataset_config, resolution
             max_samples=dataset_config.get('max_samples')
         )
         
+        # reload modelf or each resolution
         model = load_model(model_name, device)
         
         metrics, _ = evaluate_model_on_dataset(
@@ -212,7 +260,7 @@ def hyperparameter_analysis(model_name, dataset_name, dataset_config, resolution
 
 def find_good_bad_cases(model, dataset, dataset_name, num_classes, is_binary,
                         device='cuda', num_cases=5):
-    # find good and bad segmentation cases for qualitative analysis
+    # best and worst cases for visualization
     dataloader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=2)
     
     case_scores = []
@@ -220,9 +268,15 @@ def find_good_bad_cases(model, dataset, dataset_name, num_classes, is_binary,
     model.model.eval()
     
     with torch.no_grad():
-        for idx, batch in enumerate(tqdm(dataloader, desc="Finding good/bad cases")):
-            if isinstance(batch, (list, tuple)) and len(batch) == 3:
-                images, masks, img_names = batch
+        for idx, batch in enumerate(tqdm(dataloader, desc="finding good/bad cases")):
+            if isinstance(batch, list) or isinstance(batch, tuple):
+                if len(batch) >= 3:
+                    images, masks, img_names = batch[0], batch[1], batch[2]
+                elif len(batch) >= 2:
+                    images, masks = batch[0], batch[1]
+                    img_names = [f"sample_{idx}"]
+                else:
+                    raise ValueError(f"Unexpected batch format: expected at least 2 elements, got {len(batch)}")
             else:
                 images, masks = batch
                 img_names = [f"sample_{idx}"]
@@ -243,17 +297,23 @@ def find_good_bad_cases(model, dataset, dataset_name, num_classes, is_binary,
             pred = preds[0].cpu().numpy()
             mask = masks[0].cpu().numpy()
             
-            if is_binary:
-                if isinstance(img_names, (list, tuple)):
-                    img_name = img_names[0] if len(img_names) > 0 else f"sample_{idx}"
+            # get image name for this sample
+            if isinstance(img_names, list) or isinstance(img_names, tuple):
+                if len(img_names) > 0:
+                    img_name = img_names[0]
                 else:
-                    img_name = img_names
+                    img_name = f"sample_{idx}"
             else:
-                img_name = f"sample_{idx}"
+                img_name = img_names
             
+            # sometimes dataloader returns tuple
             if isinstance(img_name, tuple):
-                img_name = img_name[0] if len(img_name) > 0 else f"sample_{idx}"
+                if len(img_name) > 0:
+                    img_name = img_name[0]
+                else:
+                    img_name = f"sample_{idx}"
             
+            # score is based on dataset type
             if is_binary:
                 score = compute_dice_coefficient(pred, mask, class_idx=1)
             else:
@@ -269,12 +329,99 @@ def find_good_bad_cases(model, dataset, dataset_name, num_classes, is_binary,
                 'name': img_name
             })
     
+    #sort by score and get top or bottom cases
     case_scores.sort(key=lambda x: x['score'], reverse=True)
     
     good_cases = case_scores[:num_cases]
     bad_cases = case_scores[-num_cases:]
     
     return good_cases, bad_cases
+
+
+def ablation_study(dataset_name, dataset_config, device='cuda', save_dir=None, resolution=512):
+    # test different model components
+    ablation_results = []
+    
+    # model variants to test
+    model_variants = [
+        ('fcn_resnet50', 'FCN-ResNet50 (baseline)', False, False, 'ResNet50'),
+        ('fcn_resnet101', 'FCN-ResNet101 (deeper backbone)', False, False, 'ResNet101'),
+        ('deeplabv3_resnet50', 'DeepLabv3+-ResNet50 (ASPP+decoder, shallow)', True, True, 'ResNet50'),
+        ('deeplabv3_resnet101', 'DeepLabv3+-ResNet101 (full, deep)', True, True, 'ResNet101'),
+    ]
+    
+    print(f"\n{'='*60}")
+    print(f"Ablation Study: {dataset_name.upper()}")
+    print(f"{'='*60}")
+    
+    dataset = build_dataset_instance(
+        dataset_name,
+        root=dataset_config['root'],
+        split=dataset_config['split'],
+        size=(resolution, resolution),
+        max_samples=dataset_config.get('max_samples')
+    )
+    
+    for model_name, description, has_aspp, has_decoder, backbone in model_variants:
+        print(f"\nTesting: {description}")
+        print(f"  Backbone: {backbone}")
+        print(f"  ASPP: {has_aspp}")
+        print(f"  Decoder: {has_decoder}")
+        
+        try:
+            model = load_model(model_name, device)
+            
+            metrics, _ = evaluate_model_on_dataset(
+                model,
+                dataset,
+                dataset_name,
+                dataset_config['num_classes'],
+                dataset_config['is_binary'],
+                device=device,
+                save_results_dir=None,
+                visualize_samples=0
+            )
+            
+            result = {
+                'model': model_name,
+                'description': description,
+                'backbone': backbone,
+                'has_aspp': has_aspp,
+                'has_decoder': has_decoder,
+                'resolution': resolution,
+            }
+            
+            # store metrics
+            if dataset_config['is_binary']:
+                result['dice'] = metrics['dice']
+                result['iou'] = metrics['iou']
+                result['pixel_acc'] = metrics['pixel_acc']
+            else:
+                result['mIoU'] = metrics['mIoU']
+                result['pixel_acc'] = metrics['pixel_acc']
+            
+            ablation_results.append(result)
+            print(f"  Results: {result}")
+            
+        except Exception as e:
+            print(f"  Failed to load {model_name}: {e}")
+            continue
+    
+    # save results
+    df = pd.DataFrame(ablation_results)
+    
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+        csv_path = os.path.join(save_dir, f'ablation_study_{dataset_name}.csv')
+        df.to_csv(csv_path, index=False)
+        print(f"\nAblation results saved to {csv_path}")
+    
+    print(f"\n{'='*60}")
+    print("Ablation Study Summary")
+    print(f"{'='*60}")
+    print(df.to_string(index=False))
+    
+    return df
 
 
 def run_all_experiments(save_dir='./results', device='cuda', resolutions=[256, 384, 512],
@@ -287,11 +434,14 @@ def run_all_experiments(save_dir='./results', device='cuda', resolutions=[256, 3
     dataset_splits = dataset_splits or {}
     dataset_max_samples = dataset_max_samples or {}
     
+    #build dataset configs
     dataset_configs = []
     for name in datasets:
         if name not in DATASET_DEFAULTS:
-            raise ValueError(f"Unsupported dataset '{name}'. Available: {list(DATASET_DEFAULTS.keys())}")
+            avail = list(DATASET_DEFAULTS.keys())
+            raise ValueError("Unsupported dataset '" + name + "'. Available: " + str(avail))
         defaults = DATASET_DEFAULTS[name]
+        #build config dict
         dataset_configs.append({
             'name': name,
             'root': dataset_roots.get(name, defaults['default_root']),
@@ -318,6 +468,7 @@ def run_all_experiments(save_dir='./results', device='cuda', resolutions=[256, 3
             dataset_name = dataset_config['name']
             print(f"\n--- Dataset: {dataset_name.upper()} ---")
             
+            #build dataset at 512x512 for main eval
             dataset = build_dataset_instance(
                 dataset_name,
                 root=dataset_config['root'],
@@ -343,7 +494,8 @@ def run_all_experiments(save_dir='./results', device='cuda', resolutions=[256, 3
             metrics['is_binary'] = dataset_config['is_binary']
             all_results.append(metrics)
             
-            print(f"\nFinding good/bad cases for {model_name} on {dataset_name}...")
+            # Find qualitative examples
+            print(f"\nfinding good/bad cases for {model_name} on {dataset_name}...")
             good_cases, bad_cases = find_good_bad_cases(
                 model,
                 dataset,
@@ -398,6 +550,7 @@ def run_all_experiments(save_dir='./results', device='cuda', resolutions=[256, 3
                 save_dir=hp_dir,
             )
     
+    # create summary csv file
     print("\n" + "=" * 60)
     print("Creating Summary Table")
     print("=" * 60)
@@ -422,6 +575,22 @@ def run_all_experiments(save_dir='./results', device='cuda', resolutions=[256, 3
     summary_df.to_csv(summary_path, index=False)
     print(f"\nSummary saved to {summary_path}")
     print("\n" + summary_df.to_string())
+    
+    print("\n" + "=" * 60)
+    print("Ablation Study")
+    print("=" * 60)
+    
+    # run ablation study at fixed resolution (512)
+    for dataset_config in dataset_configs:
+        dataset_name = dataset_config['name']
+        ablation_dir = os.path.join(save_dir, 'ablation_study')
+        ablation_study(
+            dataset_name,
+            dataset_config,
+            device=device,
+            save_dir=ablation_dir,
+            resolution=512
+        )
     
     print("\n" + "=" * 60)
     print("All experiments completed")
